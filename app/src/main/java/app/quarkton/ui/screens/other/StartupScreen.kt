@@ -1,5 +1,6 @@
 package app.quarkton.ui.screens.other
 
+import android.util.Log
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
@@ -74,8 +75,12 @@ class StartupScreen : BaseScreen() {
     override fun Content() {
         Init()
         LifecycleEffect(onStarted = {
-            dm.updateGlobalConfigInBackground()
-            dm.updateCurrenciesInBackground()
+            try {
+                dm.updateGlobalConfigInBackground()
+                dm.updateCurrenciesInBackground()
+            } catch (e: Throwable) {
+                Log.w("StartupScreen", "Failed to initially update global config or currencies")
+            }
 //            if (mdl.developmentMode) {
 //                if (!mdl.devModeWent) {
 //                    nav?.push(MainWalletScreen())

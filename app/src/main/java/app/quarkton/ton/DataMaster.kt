@@ -196,30 +196,38 @@ class DataMaster(
 
     fun updateCurrenciesInBackground() {
         crs.launch {
-            val minUpdated = db.rateDao().getMinUpdated() ?: 0L
-            if (nowms() - minUpdated <= 300_000L) // 5 minutes
-               return@launch
-            val req = Request.Builder()
-                .url("https://tonapi.io/v2/rates?tokens=ton&currencies=" +
-                        currencies.keys.joinToString("%2C"))
-                .build()
-            Log.i("DataMaster", "Requesting currencies update")
-            val str = http.newCall(req).execute().use { r ->
-                if (!r.isSuccessful || r.body == null) {
-                    Log.w("DataMaster", "HTTP Request failed")
-                    return@use null
-                }
-                return@use r.body!!.string()
-            } ?: return@launch
-            Log.i("DataMaster", "Updating currencies: $str")
-            val json = json.parseToJsonElement(str)
-            db.rateDao().setList(
-                json.jsonObject["rates"]?.jsonObject?.get("TON")?.jsonObject?.get("prices")
-                    ?.jsonObject?.map {
-                        RateItem(it.key, nowms(), (it.value as? JsonPrimitive)?.doubleOrNull ?: 0.0,
-                            currencies.keys.indexOf(it.key).let{ i -> if (i < 0) 999 else i })
-                    } ?: listOf()
-            )
+            try {
+                val minUpdated = db.rateDao().getMinUpdated() ?: 0L
+                if (nowms() - minUpdated <= 300_000L) // 5 minutes
+                    return@launch
+                val req = Request.Builder()
+                    .url(
+                        "https://tonapi.io/v2/rates?tokens=ton&currencies=" +
+                                currencies.keys.joinToString("%2C")
+                    )
+                    .build()
+                Log.i("DataMaster", "Requesting currencies update")
+                val str = http.newCall(req).execute().use { r ->
+                    if (!r.isSuccessful || r.body == null) {
+                        Log.w("DataMaster", "HTTP Request failed")
+                        return@use null
+                    }
+                    return@use r.body!!.string()
+                } ?: return@launch
+                Log.i("DataMaster", "Updating currencies: $str")
+                val json = json.parseToJsonElement(str)
+                db.rateDao().setList(
+                    json.jsonObject["rates"]?.jsonObject?.get("TON")?.jsonObject?.get("prices")
+                        ?.jsonObject?.map {
+                            RateItem(it.key,
+                                nowms(),
+                                (it.value as? JsonPrimitive)?.doubleOrNull ?: 0.0,
+                                currencies.keys.indexOf(it.key).let { i -> if (i < 0) 999 else i })
+                        } ?: listOf()
+                )
+            } catch (e: Throwable) {
+                Log.e("DataMaster", "Failed to update currencies in background")
+            }
         }
     }
 

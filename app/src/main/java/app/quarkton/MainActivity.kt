@@ -224,7 +224,7 @@ open class MainActivity : FragmentActivity() {
 
         try {
             var col = if (dim) Colors.Gray else (if (black) Color.Black else Color.White)
-            if (wantSecure) col = col.copy(col.alpha,
+            if (wantSecure && mdl.developmentMode) col = col.copy(col.alpha,
                 max(0.7f, col.red), min(0.4f, col.green), min(0.4f, col.blue))
             window.statusBarColor = col.toArgb()
             WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars =
