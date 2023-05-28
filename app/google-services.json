@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1013578351468",
+    "project_id": "quarktonwallet",
+    "storage_bucket": "quarktonwallet.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1013578351468:android:082cbe2ff80d483253e949",
+        "android_client_info": {
+          "package_name": "app.quarkton"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1013578351468-7k27evp6b6e7seecai50ka0n48g87t5u.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.quarkton",
+            "certificate_hash": "427719b5a24d34521588dab7d2efbd2d5d621130"
+          }
+        },
+        {
+          "client_id": "1013578351468-llno8l0o8snfc9ba5rpv4d3nvntl0bfu.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBu1rPznJy6R-H-20-fUIaI56GklTiaLfI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1013578351468-llno8l0o8snfc9ba5rpv4d3nvntl0bfu.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
