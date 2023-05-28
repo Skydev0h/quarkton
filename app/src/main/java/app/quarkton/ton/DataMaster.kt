@@ -14,6 +14,7 @@ import app.quarkton.db.RateItem
 import app.quarkton.db.TransItem
 import app.quarkton.db.WalletItem
 import app.quarkton.extensions.joinAllIgnoringAll
+import app.quarkton.extensions.toRaw
 import app.quarkton.extensions.toRepr
 import app.quarkton.extensions.toWc
 import app.quarkton.extensions.vrStr
@@ -38,6 +39,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -46,34 +48,38 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.kotlincrypto.endians.BigEndian.Companion.toBigEndian
+import org.kotlincrypto.endians.LittleEndian.Companion.toLittleEndian
 import org.ton.api.liteclient.config.LiteClientConfigGlobal
-import org.ton.api.pk.PrivateKeyEd25519
-import org.ton.api.pub.PublicKeyEd25519
 import org.ton.api.validator.config.ValidatorConfigGlobal
 import org.ton.bigint.BigInt
-import org.ton.bitstring.BitString
 import org.ton.block.AddrStd
 import org.ton.block.Coins
 import org.ton.block.DnsNextResolver
 import org.ton.block.DnsRecord
 import org.ton.block.DnsSmcAddress
+import org.ton.block.StateInit
 import org.ton.block.VmStackCell
 import org.ton.block.VmStackValue
 import org.ton.boc.BagOfCells
+import org.ton.cell.Cell
 import org.ton.cell.CellBuilder
 import org.ton.contract.wallet.MessageData
 import org.ton.contract.wallet.WalletTransfer
-import org.ton.crypto.decodeHex
 import org.ton.crypto.digest.sha256
 import org.ton.crypto.encodeHex
+import org.ton.crypto.encoding.base64
 import org.ton.crypto.hex
 import org.ton.lite.api.liteserver.LiteServerAccountId
 import org.ton.lite.client.LiteClient
 import org.ton.lite.client.internal.TransactionId
 import org.ton.mnemonic.Mnemonic
+import org.ton.tlb.CellRef
 import org.ton.tlb.loadTlb
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -118,7 +124,7 @@ class DataMaster(
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(1, TimeUnit.MINUTES)
         .writeTimeout(1, TimeUnit.MINUTES)
-        .build(), db, json, crs)
+        .build(), db, json, crs, ::tcUpperHandleEvent)
 
     val tcRequestedConnect = mutableStateOf(false)
     val tcIsConnected = derivedStateOf { tcl.isConnected.value }
@@ -127,6 +133,9 @@ class DataMaster(
 
     val tcWantConnected = mutableStateOf(false)
     var tcd: TCData? = null
+
+    val tcIsPendingSend = mutableStateOf(false)
+    var tcPendingSend: Triple<Long, List<WalletTransfer>, Long?>? = null
 
     var walletRefreshInterval = 60
 
@@ -396,6 +405,16 @@ class DataMaster(
 
     fun getCurrentVerRev() = db.walletDao().getCurrent()?.verRev ?: Wallet.V4R2
 
+    fun getWallet(verRev: Int? = null): Wallet? {
+        val vr = verRev ?: getCurrentVerRev()
+        val sf = per.getSeedPhrase()
+        if (sf == null) {
+            Log.w(LOG, "No seed phrase found")
+            return null
+        }
+        return Wallet(abs(vr), Mnemonic.toKey(sf), vr.toWc())
+    }
+
     fun refreshCurrentWallet(multi: Int = 3) {
         if (noConnection()) return
         if (isRefreshing.value) return
@@ -406,12 +425,7 @@ class DataMaster(
             crs.launch {
                 try {
                     val vr = getCurrentVerRev()
-                    val sf = per.getSeedPhrase()
-                    if (sf == null) {
-                        Log.w(LOG, "No seed phrase found")
-                        return@launch
-                    }
-                    val wal = Wallet(abs(vr), Mnemonic.toKey(sf), vr.toWc())
+                    val wal = getWallet(vr) ?: return@launch
                     val best = atomic(-1)
                     Log.i(LOG, "Refreshing current wallet (${vr.toString(16)})")
                     val mx = Mutex(true)
@@ -524,13 +538,7 @@ class DataMaster(
                     val addr = db.walletDao().getCurrent()?.address ?: return@launch
                     val txid = db.transDao().getFirstByAccount(addr)?.prevId ?: return@launch
                     Log.i(LOG, "Loading more transactions from $txid for $addr")
-                    val vr = getCurrentVerRev()
-                    val sf = per.getSeedPhrase()
-                    if (sf == null) {
-                        Log.w(LOG, "No seed phrase found")
-                        return@launch
-                    }
-                    val wal = Wallet(abs(vr), Mnemonic.toKey(sf), vr.toWc())
+                    val wal = getWallet() ?: return@launch
                     val mx = Mutex(true)
                     multipass(multi, onDone = { n, _ -> doneServersLM.value = n }) { lc, i, _ ->
                         val txs = wal.getTransactions(lc, after = TransactionId.fromRepr(txid))
@@ -833,13 +841,7 @@ class DataMaster(
             isSending.value = true
             crs.launch {
                 try {
-                    val vr = getCurrentVerRev()
-                    val sf = per.getSeedPhrase()
-                    if (sf == null) {
-                        Log.w(LOG, "No seed phrase found")
-                        return@launch
-                    }
-                    val wal = Wallet(abs(vr), Mnemonic.toKey(sf), vr.toWc())
+                    val wal = getWallet() ?: return@launch
                     multipass(multi, onDone = { _, _ ->
                         // One is done, let's keep others sending in background
                         isSending.value = false
@@ -852,7 +854,7 @@ class DataMaster(
                                 if (sendAll)
                                     sendMode = 2 + 128
                                 else
-                                    coins = Coins.Companion.ofNano(amount)
+                                    coins = Coins.ofNano(amount)
                                 if (comment != "")
                                     messageData = MessageData.comment(comment)
                                 bounceable = false
@@ -887,6 +889,12 @@ class DataMaster(
                 if (tcl.teardown) {
                     tcWantConnected.value = false
                     tcl.teardown = false
+                }
+                if (db.walletDao().getCurrentAddress() != db.dappDao().getActiveWallet()) {
+                    Log.w("DataMaster", "Wallet change, wallet: ${db.walletDao().getCurrentAddress()}, dapp: ${db.dappDao().getActiveWallet()}")
+                    tcDisconnect()
+                    tcd = null
+                    db.dappDao().setCurrent("")
                 }
                 if (tcd != null && tcd?.connect != tcWantConnected.value) {
                     tcd = tcd?.copy(connect = tcWantConnected.value)
@@ -936,7 +944,7 @@ class DataMaster(
             // put("appName", ctx.resources.getString(R.string.app_name))
             // FIXME: !!! Temporary !!! Wallet SDK DOES NOT work with wallet not in wallets-list
             // And the deadline is too close to wait for inclusion in that list to make it usable!
-            put("appName", "Tonkeeper")
+            put("appName", "Tonkeeper") // TODO: Include wallet in wallets-list and change this to real name
             put("appVersion", BuildConfig.VERSION_NAME)
             put("maxProtocolVersion", 2)
             put("features", buildJsonArray {
@@ -948,50 +956,121 @@ class DataMaster(
         }
     }
 
+    fun tcUpperHandleEvent(method: String, params: JsonElement?, id: Long): Pair<Int?, String> {
+        if (method != "sendTransaction") {
+            return 4041 to "Unknown method (Upper layer)"
+        }
+        val wal = getWallet() ?: return 5001 to "Invalid wallet state"
+        val par = params!!.jsonArray[0].jsonPrimitive.content
+        val jp = json.parseToJsonElement(par)
+        val net = jp.jsonObject["network"]?.jsonPrimitive?.content
+        if ((net != null) && (net != "-239")) return 4030 to "Invalid network"
+        val from = jp.jsonObject["from"]?.jsonPrimitive?.content
+        if ((from != null) && (from.lowercase() != wal.address.toRaw().lowercase())) {
+            return 5030 to "Invalid wallet"
+        }
+        val valu = jp.jsonObject["valid_until"]?.jsonPrimitive?.longOrNull
+        val msgs = jp.jsonObject["messages"]?.jsonArray ?: return 5031 to "No messages provided"
+        if (msgs.size !in 1 .. 4) return 5032 to "Invalid messages count"
+        val wts = msgs.map {
+            try {
+                WalletTransfer {
+                    destination = AddrStd(it.jsonObject["address"]!!.jsonPrimitive.content)
+                    coins = Coins.ofNano(it.jsonObject["amount"]!!.jsonPrimitive.long)
+                    val body = it.jsonObject["payload"]?.jsonPrimitive?.content
+                    val init = it.jsonObject["stateInit"]?.jsonPrimitive?.content
+                    if (body != null || init != null) {
+                        messageData = MessageData.raw(
+                            if (body != null) BagOfCells(base64(body)).first() else Cell.empty(),
+                            if (init != null) CellRef(BagOfCells(base64(init)).first(), StateInit.tlbCodec()) else null
+                        )
+                    }
+                    bounceable = false
+                }
+            } catch (e: Throwable) {
+                return 5033 to "Invalid messages content"
+            }
+        }
+        val rectvalu = valu?.let { if (it > 1000000000000L) it/1000L else it }
+        if ((rectvalu != null) && (now() > rectvalu))
+            return 4100 to "Message already expired"
+        tcPendingSend = Triple(id, wts, rectvalu)
+        tcIsPendingSend.value = true
+        tcWantConnected.value = false // Disconnect so that we do not receive further events until resolution
+        return -1 to ""
+    }
+
+    fun tcTransactionSendError(id: Long? = null) {
+        tcl.replyError(id ?: tcPendingSend!!.first, 6000, "Rejected by user")
+    }
+
+    fun tcTransactionSendResult(id: Long? = null) {
+        val ps = tcPendingSend!!
+        val wal = getWallet()!!
+        val sent = mutableStateOf(false)
+        crs.launch {
+            multipass() { lc, _, _ ->
+                val signed = wal.signTransfer(liteClient = lc,
+                    transfers = ps.second.toTypedArray(), validUntil = ps.third)
+                val boc = BagOfCells(signed).toByteArray().encodeBase64()
+                synchronized(sent) {
+                    if (!sent.value)
+                        tcl.replySuccess(id ?: ps.first, boc)
+                    sent.value = true
+                }
+                wal.transferPrepared(lc, signed)
+                return@multipass true
+            }
+        }
+    }
+
     fun tcSayHello(da: DAppItem, icrs: Map<String, String>) {
-        val wali = db.walletDao().getCurrent()!!
-        val sf = per.getSeedPhrase()!!
-        val wal = Wallet(abs(wali.verRev), Mnemonic.toKey(sf), wali.verRev.toWc())
+        val wal = getWallet()!!
         val devi = tcDeviceInfo()
         val items = mutableListOf<JsonObject>()
         if (icrs.containsKey("ton_addr")) {
             items.add(buildJsonObject {
                 put("name", "ton_addr")
                 put("address", wal.address.toString(false).lowercase())
-                put("network", -239)
+                put("network", "-239")
                 put("publicKey", wal.publicKey.key.encodeHex().lowercase())
-                // TODO: Is it correct way to base64 encode cell? Could not find another way.
+                // DONE: Is it correct way to base64 encode cell? Could not find another way.
+                // It IS correct! Tested with uninitialized empty wallet! Yoohoo!!
                 put("walletStateInit", BagOfCells(wal.getStateInit().toCell()).toByteArray().encodeBase64())
             })
         }
         if (icrs.containsKey("ton_proof")) {
             val now = now()
             val payload = icrs["ton_proof"]!!
+
             val domain = da.domain()
-            val message = CellBuilder.createCell {
-                storeBytes("ton-proof-item-v2/".toByteArray())
-                storeInt(wal.workchainId, 32)
-                storeBytes(wal.address.address.toByteArray())
-                storeUInt32(domain.toByteArray().size.toUInt())
-                storeBytes(domain.toByteArray())
-                storeUInt64(now.toULong())
-                // storeBytes(payload.toByteArray())
-            }
-            val extmsg = CellBuilder.createCell {
-                storeUInt16(0xFFFFu)
-                storeBytes("ton-connect".toByteArray())
-                storeBytes(sha256(message.bits.toByteArray() + payload.toByteArray()))
-            }
-            val signature = wal.privateKey.sign(extmsg.bits.toByteArray())
+            val dombts = domain.toByteArray()
+
+            val inmsg =
+                "ton-proof-item-v2/".toByteArray() +
+                wal.workchainId.toBigEndian().toByteArray() +
+                wal.address.address.toByteArray() +
+                dombts.size.toLittleEndian().toByteArray() +
+                dombts +
+                now.toLittleEndian().toByteArray() +
+                payload.toByteArray()
+
+            val exmsg =
+                hex("FFFF") + "ton-connect".toByteArray() + sha256(inmsg)
+
+            val signature = wal.privateKey.sign(sha256(exmsg))
+
             items.add(buildJsonObject {
                 put("name", "ton_proof")
-                put("domain", buildJsonObject {
-                    put("lengthBytes", domain.length)
-                    put("value", domain)
+                put("proof", buildJsonObject { // XXX: This sub-element ......
+                    put("domain", buildJsonObject {
+                        put("lengthBytes", domain.length)
+                        put("value", domain)
+                    })
+                    put("signature", signature.encodeBase64())
+                    put("payload", payload)
+                    put("timestamp", now)
                 })
-                put("signature", signature.encodeBase64())
-                put("payload", payload)
-                put("timestamp", now)
             })
         }
         val obj = buildJsonObject {
@@ -1003,12 +1082,17 @@ class DataMaster(
         tcl.sendEvent("connect", obj)
     }
 
-    fun parseInitialRequest(id: String, req: String): Pair<DAppItem, Map<String, String>> {
-        val pub = PublicKeyEd25519(BitString(id).toByteArray())
+    fun tcSayGoodbye(id: String) {
+        val da = db.dappDao().get(id) ?: return
+        TCLink.justSendEvent(http, hex(da.mykey), hex(da.id), FALLBACK_BRIDGE_URL,
+            "disconnect", buildJsonObject {  })
+    }
+
+    fun parseInitialRequest(id: String, req: String, wal: String): Pair<DAppItem, Map<String, String>> {
         val rj = json.parseToJsonElement(req)
         val murl = rj.jsonObject["manifestUrl"]!!.jsonPrimitive.content
         val hreq = Request.Builder().url(murl).build()
-        Log.i("DataMaster", "Requesting currencies update")
+        Log.i("DataMaster", "Parsing initial request, manifest $murl")
         val mani = http.newCall(hreq).execute().use { r ->
             if (!r.isSuccessful || r.body == null) {
                 Log.w("DataMaster", "Failed to load manifest $murl")
@@ -1025,6 +1109,7 @@ class DataMaster(
         val item = DAppItem(
             id = id,
             mykey = nacl.box.keyPair().second.encodeHex(),
+            waladdr = wal,
             manifest = murl,
             url = url,
             name = name,

@@ -28,6 +28,7 @@ import app.quarkton.db.TransItem
 import app.quarkton.db.createMockTransaction
 import app.quarkton.extensions.formatBalance
 import app.quarkton.extensions.simpleBalance
+import app.quarkton.ton.extensions.ZERO_TX
 import app.quarkton.ui.theme.Colors
 import app.quarkton.ui.theme.QuarkTONWalletTheme
 import app.quarkton.ui.theme.Styles
@@ -80,6 +81,12 @@ fun InnerTransRow(
 ) {
     if ((address == null) || (amount == null)) return
     val failed = remember { !tx.actOk or !tx.compOk }
+    fun cm(c: Color) =
+        when {
+            failed -> Colors.TextRed
+            tx.id == ZERO_TX -> Colors.Primary
+            else -> c
+        }
     Surface(
         color = Color.White, modifier = Modifier
             .fillMaxWidth()
@@ -90,7 +97,7 @@ fun InnerTransRow(
         shape = RoundedCornerShape(8.dp),
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            Text(text = time, style = Styles.txListText, color = if (failed) Colors.TextRed else Colors.Gray,
+            Text(text = time, style = Styles.txListText, color = cm(Colors.Gray),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(0.dp, 17.dp, 12.dp, 0.dp))
@@ -108,18 +115,18 @@ fun InnerTransRow(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(text = address.substring(0, 6) + "…" + address.substring(address.length - 7),
-                    color = if (failed) Colors.TextRed else Color.Black, style = Styles.txAddress)
+                    color = cm(Color.Black), style = Styles.txAddress)
                 if (tx.storFee != 0L) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(text = stringResource(R.string.minus_storage_fee, tx.storFee.simpleBalance(9)),
-                        color = if (failed) Colors.TextRed else Colors.Gray, style = Styles.txListText)
+                        color = cm(Colors.Gray), style = Styles.txListText)
                 }
                 if (comment != null) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Surface(
                         color = Colors.BackGray, shape = Styles.commentShape
                     ) {
-                        Text(text = comment, style = Styles.mainText, color = if (failed) Colors.TextRed else Color.Black,
+                        Text(text = comment, style = Styles.mainText, color = cm(Color.Black),
                             modifier = Modifier.padding(12.dp, 10.dp))
                     }
                 }

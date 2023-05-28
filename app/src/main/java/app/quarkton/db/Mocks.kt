@@ -2,6 +2,7 @@ package app.quarkton.db
 
 import app.quarkton.ton.extensions.ZERO_TX
 
+const val ZERO_ADDR = "000000000000000000000000000000000000000000000000"
 const val MOCK_ADDR_1 = "EQABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst"
 const val MOCK_ADDR_2 = "EQBbBbBbAaAaAaCcCcCcDdDdDdEeEeEeFfFfFfAaAaBbBcc-"
 const val MOCK_ADDR_3 = "EQ1234567890abcdefg1234567890abcdegh123745609879"

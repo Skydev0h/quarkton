@@ -65,6 +65,7 @@ fun TCTransferFrag(
     outputs: List<Triple<Long, String, Pair<Int, Int>>>,
     loading: Boolean,
     success: Boolean,
+    cancelling: Boolean,
     confirmClicked: (() -> Unit),
     cancelClicked: (() -> Unit),
     heightPct: Float = 1f,
@@ -100,13 +101,15 @@ fun TCTransferFrag(
     val totalAmount = remember(outputs) { outputs.sumOf { it.first } }
     val fmtAmount = remember(totalAmount) { totalAmount.formatBalance() }
 
+    // TODO: Load from config when find out how to read it properly
     // already divided by 2^16 divisor
     val bitPrice = 1_000L
     val cellPrice = 100_000L
-    val messagePrice = 6_804_000L
-    // TODO: Maybe find way to *really* estimate the fee
+    val lumpPrice = 1_000_000L
+    // DONE: Maybe find way to *really* estimate the fee
+    // Fully assembling int message that will be sent
     val fee by remember { derivedStateOf {
-        (outputs.sumOf { it.third.first * bitPrice + it.third.second * cellPrice + messagePrice } ) *
+        (outputs.sumOf { it.third.first * bitPrice + it.third.second * cellPrice + lumpPrice } ) *
                 (if (inMasterChain) 1 else 10) // MC fees x10
     } }
 
@@ -130,7 +133,7 @@ fun TCTransferFrag(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = stringResource(R.string.ton_transfer) + " UI Demo",
+                        text = stringResource(R.string.ton_transfer),
                         style = Styles.cardLabel,
                         color = Color.Black, modifier = Modifier
                             .padding(20.dp, 16.dp, 0.dp, 16.dp)
@@ -226,12 +229,22 @@ fun TCTransferFrag(
                                 colors = ButtonDefaults.buttonColors(Colors.BackTranPrim, Colors.Primary)
                             ) {
                                 if (!success) {
+                                    if (cancelling) {
+                                        Spacer(modifier = Modifier.width(16.dp))
+                                    }
                                     Text(
                                         text = stringResource(R.string.btn_cancel),
                                         style = Styles.buttonLabel,
                                         textAlign = TextAlign.Center,
                                         modifier = Modifier.weight(1f)
                                     )
+                                    if (cancelling) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Colors.Primary
+                                        )
+                                    }
                                 }
                             }
                             if (outputs.size in 1..4) {
@@ -289,6 +302,7 @@ private fun Preview() {
                 ),
                 loading = false,
                 success = false,
+                cancelling = false,
                 confirmClicked = {},
                 cancelClicked = {},
             )

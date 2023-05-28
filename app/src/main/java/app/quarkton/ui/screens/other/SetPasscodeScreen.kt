@@ -196,6 +196,7 @@ class SetPasscodeScreen : BaseScreen() {
                 Keypad(onPressed = {
                     if (sm.scale.value or sm.error.value) return@Keypad
                     keypadPressed(sm, it, bad = {
+                        sm.stop.value = true
                         view.vibrateError()
                         crs?.launch {
                             delay(300L)
@@ -208,8 +209,10 @@ class SetPasscodeScreen : BaseScreen() {
                             sm.confirmer.value = ""
                             delay(1000L)
                             sm.error.value = false
+                            sm.stop.value = false
                         }
                     }, good = {
+                        sm.stop.value = true
                         crs?.launch {
                             delay(300L)
                             sm.scale.value = true
@@ -217,8 +220,10 @@ class SetPasscodeScreen : BaseScreen() {
                             sm.scale.value = false
                             delay(300L)
                             finishSetup(nav, sm)
+                            sm.stop.value = false
                         }
-                    }) {
+                    }, next = {
+                        sm.stop.value = true
                         crs?.launch {
                             delay(300L)
                             sm.scale.value = true
@@ -228,8 +233,9 @@ class SetPasscodeScreen : BaseScreen() {
                             sm.confirmer.value = sm.passcode.value
                             sm.confirming.value = true
                             sm.passcode.value = ""
+                            sm.stop.value = false
                         }
-                    }
+                    })
                 })
             }
         }
@@ -252,4 +258,5 @@ private class SetPasscodeModel : ScreenModel {
     val error = mutableStateOf(false)
     val scale = mutableStateOf(false)
     val popup = mutableStateOf(false)
+    val stop = mutableStateOf(false)
 }

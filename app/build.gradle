@@ -15,8 +15,8 @@ android {
         applicationId "app.quarkton"
         minSdk 23
         targetSdk 33
-        versionCode 101000
-        versionName "1.1.0"
+        versionCode 102000
+        versionName "1.2.0"
 
 //        javaCompileOptions {
 //            annotationProcessorOptions {
@@ -107,6 +107,7 @@ dependencies {
     implementation "androidx.camera:camera-view:1.2.3"
     implementation 'com.google.zxing:core:3.5.1'
     implementation("io.coil-kt:coil-compose:2.4.0")
+    implementation("org.kotlincrypto.endians:endians:0.1.0")
 
     implementation 'cash.z.ecc.android:kotlin-bip39:1.0.4'
     // implementation 'org.ton:ton-kotlin:0.2.16'

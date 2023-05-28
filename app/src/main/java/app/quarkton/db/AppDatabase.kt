@@ -6,7 +6,7 @@ import androidx.room.TypeConverters
 
 @Database(entities = [
     WalletItem::class, TransItem::class, NameItem::class, RateItem::class, DAppItem::class
-], version = 13, exportSchema = false)
+], version = 14, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun walletDao(): WalletDao

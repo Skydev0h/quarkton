@@ -65,6 +65,9 @@ class MainViewModel : ViewModel() {
     var sendingComment: String = ""
     var sendAllBalance: Boolean = false
 
+    var sendPendingTx = mutableStateOf<Triple<String, Long, String>?>(null)
+    var sendPendingWal = mutableStateOf<Pair<String, String>?>(null)
+
     var qrFromAddrScr: Boolean = false
 
     val tcPendingCR = MutableStateFlow<Pair<String, String>?>(null)

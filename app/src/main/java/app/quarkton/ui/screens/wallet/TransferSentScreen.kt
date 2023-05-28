@@ -30,7 +30,10 @@ import app.quarkton.extensions.breakMiddle
 import app.quarkton.extensions.simpleBalance
 import app.quarkton.ui.elements.JumboTemplate
 import app.quarkton.ui.theme.Styles
+import cafe.adriel.voyager.core.lifecycle.LifecycleEffect
 import com.airbnb.lottie.compose.LottieConstants
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class TransferSentScreen : BaseWalletScreen() {
 
@@ -45,6 +48,14 @@ class TransferSentScreen : BaseWalletScreen() {
         Init(dark = true)
 
         val isSending by dm.isSending
+
+        LifecycleEffect(onStarted = {
+            crs?.launch(Dispatchers.IO) {
+                val wal = db.walletDao().getCurrent() ?: return@launch
+                mdl.sendPendingTx.value = Triple(mdl.sendingToAddress, mdl.sendingAmount, mdl.sendingComment)
+                mdl.sendPendingWal.value = Pair(wal.address, wal.lastTxId)
+            }
+        })
 
         Surface(
             modifier = Modifier.fillMaxSize(),

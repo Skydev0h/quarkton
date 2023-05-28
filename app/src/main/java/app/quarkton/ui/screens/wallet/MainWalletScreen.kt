@@ -73,12 +73,15 @@ import androidx.compose.ui.zIndex
 import androidx.core.math.MathUtils.clamp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.quarkton.R
+import app.quarkton.db.TransItem
 import app.quarkton.db.createMockTransaction
 import app.quarkton.extensions.appendStyled
 import app.quarkton.extensions.crs
 import app.quarkton.extensions.formatBalance
+import app.quarkton.extensions.measure
 import app.quarkton.extensions.shortAddr
 import app.quarkton.extensions.simpleBalance
+import app.quarkton.extensions.toRepr
 import app.quarkton.extensions.vibrateError
 import app.quarkton.extensions.vibrateLongPress
 import app.quarkton.extensions.vrStr
@@ -95,6 +98,7 @@ import app.quarkton.ui.elements.TransRow
 import app.quarkton.ui.elements.frag.ReceiveFrag
 import app.quarkton.ui.elements.frag.TransactionFrag
 import app.quarkton.ui.elements.frag.tonconnect.TCConnectFrag
+import app.quarkton.ui.elements.frag.tonconnect.TCSettingsFrag
 import app.quarkton.ui.elements.frag.tonconnect.TCTransferFrag
 import app.quarkton.ui.elements.frag.wallet.WalletCreatedFrag
 import app.quarkton.ui.elements.frag.wallet.WalletLoadingFrag
@@ -241,6 +245,10 @@ class MainWalletScreen : BaseWalletScreen() {
         val balance = remember(wallet?.balance) {
             wallet?.balance?.formatBalance() ?: AnnotatedString("")
         }
+
+        val sendPendingWal by mdl.sendPendingWal
+        val sendPendingTx by mdl.sendPendingTx
+
         val dapp by db.dappDao().observeCurrent().observeAsState()
         val dappName by remember { derivedStateOf { dapp?.name } }
         val tcClosed by remember { derivedStateOf { dapp?.closed ?: false } }
@@ -253,25 +261,47 @@ class MainWalletScreen : BaseWalletScreen() {
         val tcPending by mdl.tcPendingItem.collectAsStateWithLifecycle()
         val tcRequest by mdl.tcPendingCR.collectAsStateWithLifecycle()
 
+        val tcPendingSend by dm.tcIsPendingSend
+        var tcSendItems by remember { mutableStateOf(listOf<Triple<Long, String, Pair<Int, Int>>>()) }
+        var tcSendId by remember { mutableStateOf(0L) }
+
         var tcConnectLoading by remember { mutableStateOf(false) }
         var tcConnectSuccess by remember { mutableStateOf(false) }
+
         var tcTransferLoading by remember { mutableStateOf(false) }
+        var tcTransferCancelling by remember { mutableStateOf(false) }
         var tcTransferSuccess by remember { mutableStateOf(false) }
 
         LaunchedEffect(tcRequest) {
             val (id, req) = tcRequest ?: return@LaunchedEffect
+            dm.tcIsPendingSend.value = false
             crs?.launch(Dispatchers.IO) {
                 try {
-                    val (item, icrs) = dm.parseInitialRequest(id, req)
+                    val wal = db.walletDao().getCurrentAddress()
+                    val (item, icrs) =
+                        dm.parseInitialRequest(id, req, wal!!)
                     mdl.tcPendingItem.value = item
                     mdl.tcWantedCItems = icrs
                     m.showTCConnect()
                 } catch (e: Throwable) {
                     Log.e("MainWalletScreen", "TC processing failed", e)
-                    Toast.makeText(act, R.string.failed_processing_tc_request, Toast.LENGTH_SHORT)
-                        .show()
+                    launch(Dispatchers.Main) {
+                        Toast.makeText(act, R.string.failed_processing_tc_request,
+                            Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
+        }
+
+        LaunchedEffect(tcPendingSend) {
+            if (tcRequest != null) return@LaunchedEffect
+            if (!tcPendingSend) return@LaunchedEffect
+            val (id, wts, valu) = dm.tcPendingSend ?: return@LaunchedEffect
+            tcSendId = id
+            tcSendItems = wts.map {
+                it.coins.coins.amount.toLong() to it.destination.toRepr() with it.measure(false) // Lump price includes message root
+            }
+            m.showTCTransfer()
         }
 
         val currBalance = remember(wallet?.balance, currRate?.rate, per.selectedCurrency) {
@@ -287,6 +317,9 @@ class MainWalletScreen : BaseWalletScreen() {
         val ftxid by remember { derivedStateOf { if (txs?.isEmpty() != false) "" else txs!!.first().id } }
 
         LaunchedEffect(ftxid) {
+            if ((m.stxTransaction.id == ZERO_TX) && (m.isShowTransaction.value)) {
+                m.hideTransaction()
+            }
             // On change of amount of transactions scroll up
             if (mdl.sendingToAddress == m.stxAddress) {
                 if (ntxs != 0) {
@@ -396,7 +429,7 @@ class MainWalletScreen : BaseWalletScreen() {
             }
             Spacer(modifier = Modifier.weight(1f))
             Box(modifier = Modifier.size(48.dp, 56.dp), contentAlignment = Alignment.Center) {
-                IconButton(onClick = { m.showTCTransfer() }) {
+                IconButton(onClick = { m.showTCSettings() }) {
                     Icon(
                         tint = Color.White,
                         painter = painterResource(id = R.drawable.tonconnect),
@@ -599,6 +632,13 @@ class MainWalletScreen : BaseWalletScreen() {
                                     }
                                 }
                             }
+                            val pentx by remember { derivedStateOf {
+                                if ((sendPendingTx != null) && (sendPendingWal != null)
+                                    && (sendPendingWal?.first == wallet?.address)
+                                    && (sendPendingWal?.second == wallet?.lastTxId)) {
+                                    TransItem.pendingTransaction(sendPendingTx!!)
+                                } else null
+                            } }
                             LazyColumn(
                                 modifier = Modifier.fillMaxSize(),
                                 state = m.lazyState
@@ -606,7 +646,23 @@ class MainWalletScreen : BaseWalletScreen() {
                             ) {
                                 // Need to know index to check previous item for those damn date rows
                                 // items(txs ?: listOf(), key = { it.id }) {
-                                // TODO: Show pending or failed outgoing transaction
+                                // DONE: Show pending or failed outgoing transaction
+                                val ptx = pentx
+                                item {
+                                    if (ptx != null) {
+                                        TransRow(
+                                            tx = ptx, prev = null, dateFmt = dateFmt,
+                                            timeFmt = timeFmt, dateFmtXL = dateFmtXL
+                                        ) { tx, inc, adr, amt, cmt ->
+                                            m.stxTransaction = tx
+                                            m.stxIsIncoming = inc
+                                            m.stxAddress = adr
+                                            m.stxAmount = amt
+                                            m.stxComment = cmt
+                                            m.showTransaction()
+                                        }
+                                    }
+                                }
                                 items(tl.size, key = { tl[it].id + "|" +  (if (it > 0) tl[it - 1].id else "NULL") }) {
                                     TransRow(
                                         prev = if (it > 0) tl[it - 1] else null, tx = tl[it],
@@ -838,35 +894,68 @@ class MainWalletScreen : BaseWalletScreen() {
                 )
         }
         //****************************************************************************************//
-
-        val mock = remember { createMockTransaction() }
         Overlay(visible = m.isShowTCTransfer.value, darker = true, backdropClicked = {}) {
             BackHandler(onBack = {})
             TCTransferFrag(
-                outputs = listOf(
-                    mock.amt!! to mock.dst!! with Pair(mock.cmt?.length ?: 0, 1),
-                    mock.amt1!! to mock.dst1!! with Pair(mock.cmt1?.length ?: 0, 1),
-                    mock.amt2!! to mock.dst2!! with Pair(mock.cmt2?.length ?: 0, 1),
-                    mock.amt3!! to mock.dst3!! with Pair(mock.cmt3?.length ?: 0, 1),
-                    // mock.inamt!! to mock.src!! with mock.incmt
-                ),
+                outputs = tcSendItems,
                 loading = tcTransferLoading,
                 success = tcTransferSuccess,
+                cancelling = tcTransferCancelling,
                 confirmClicked = {
+                    if (tcTransferLoading || tcTransferSuccess || tcTransferCancelling) return@TCTransferFrag
                     crs?.launch {
                         tcTransferLoading = true
-                        delay(1000)
-                        tcTransferSuccess = true
-                        delay(2000)
-                        m.hideTCTransfer()
-                        delay(1000)
-                        tcTransferLoading = false
-                        tcTransferSuccess = false
+                        dm.tcWantConnected.value = true
+                        for (i in 0..3000) {
+                            delay(200)
+                            if (dm.tcIsConnected.value && !dm.isRefreshing.value)
+                                break
+                        }
+                        launch(Dispatchers.IO) {
+                            // dm.tcl.replyError(tcSendId, 6000, "Rejected by user")
+                            dm.tcTransactionSendResult(tcSendId)
+                            tcTransferSuccess = true
+                            delay(2000)
+                            m.hideTCTransfer()
+                            delay(1000)
+                            tcTransferLoading = false
+                            tcTransferSuccess = false
+                            dm.tcIsPendingSend.value = false
+                            dm.tcPendingSend = null
+                        }
+
                     }
                 },
-                cancelClicked = { m.hideTCTransfer() },
+                cancelClicked = {
+                    if (tcTransferLoading || tcTransferSuccess || tcTransferCancelling) return@TCTransferFrag
+                    tcTransferCancelling = true
+                    crs?.launch {
+                        dm.tcWantConnected.value = true
+                        for (i in 0..3000) {
+                            delay(200)
+                            if (dm.tcIsConnected.value)
+                                break
+                        }
+                        launch(Dispatchers.IO) {
+                            dm.tcTransactionSendError(tcSendId)
+                            m.hideTCTransfer()
+                            delay(1000)
+                            tcTransferCancelling = false
+                            dm.tcIsPendingSend.value = false
+                            dm.tcPendingSend = null
+                        }
+                    }
+                },
                 heightPct = m.showTCTransferHeight.value
             )
+        }
+        Overlay(visible = m.isShowTCSettings.value, darker = true, backdropClicked = { m.hideTCSettings() }) {
+            BackHandler(onBack = { m.hideTCSettings() })
+            TCSettingsFrag(
+                db = db, mdl = mdl, dm = dm, crs = crs!!,
+                walletAddress = wallet?.address ?: "NULL",
+                closeClicked = { m.hideTCSettings() },
+                heightPct = m.showTCSettingsHeight.value)
         }
         //****************************************************************************************//
         //

@@ -232,4 +232,10 @@
     <string name="is_disconnecting">" is disconnecting"</string>
     <string name="connection_removed_dapp">Connection destroyed by dApp.\nTap and hold to hide this bar.</string>
     <string name="is_closed">" is closed"</string>
+    <string name="tc_active">Active</string>
+    <string name="tc_closed">Closed</string>
+    <string name="tc_paused">Paused</string>
+    <string name="tc_connecting">Connecting</string>
+    <string name="tc_connected">Connected</string>
+    <string name="tc_standby">Standby</string>
 </resources>

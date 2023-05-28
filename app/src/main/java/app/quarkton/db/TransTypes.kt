@@ -10,7 +10,9 @@ import androidx.room.Query
 import app.quarkton.extensions.comment
 import app.quarkton.extensions.toRepr
 import app.quarkton.extensions.toVal
+import app.quarkton.ton.extensions.ZERO_TX
 import app.quarkton.ton.extensions.toRepr
+import app.quarkton.ton.now
 import org.ton.block.AddrStd
 import org.ton.block.IntMsgInfo
 import org.ton.block.TrPhaseComputeVm
@@ -106,6 +108,38 @@ data class TransItem(
                 actOk = d?.action?.value?.value?.success ?: true,
                 compOk = c?.success ?: true,
                 prevId = TransactionId(t.prevTransHash, t.prevTransLt.toLong()).toRepr()
+            )
+        }
+
+        fun pendingTransaction(args: Triple<String, Long, String>, failed: Boolean = false): TransItem {
+            return TransItem(
+                id = ZERO_TX,
+                acc = ZERO_ADDR,
+                src = null,
+                dst = args.first,
+                dst1 = null,
+                dst2 = null,
+                dst3 = null,
+                incmt = null,
+                cmt = args.third.ifEmpty { null },
+                cmt1 = null,
+                cmt2 = null,
+                cmt3 = null,
+                inamt = null,
+                amt = args.second,
+                amt1 = null,
+                amt2 = null,
+                amt3 = null,
+                now = now(),
+                lt = Long.MAX_VALUE,
+                totalFee = 0L,
+                storFee = 0L,
+                actFee = 0L,
+                compFee = 0L,
+                fwdFee = 0L,
+                actOk = !failed,
+                compOk = !failed,
+                prevId = ZERO_TX
             )
         }
     }

@@ -48,6 +48,9 @@ interface WalletDao {
     @Query("SELECT * FROM wallets WHERE current = 1 LIMIT 1")
     fun getCurrent(): WalletItem?
 
+    @Query("SELECT address FROM wallets WHERE current = 1 LIMIT 1")
+    fun getCurrentAddress(): String?
+
     @Query("SELECT * FROM wallets WHERE address = :address")
     suspend fun getByAddress(address: String): WalletItem?
 

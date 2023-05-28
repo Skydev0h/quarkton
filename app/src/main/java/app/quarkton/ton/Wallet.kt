@@ -127,7 +127,63 @@ class Wallet(
     fun getStateInit() =
         getStateInit(verRev, publicKey, workchainId, walletId)
 
-    suspend fun transfer(liteClient: LiteClient, vararg transfers: WalletTransfer) {
+    suspend fun signTransfer(liteClient: LiteClient, vararg transfers: WalletTransfer, validUntil: Long? = null): Cell {
+        if (transfers.size > 4)
+            throw IllegalArgumentException("Maximum of 4 transfers at a time are supported")
+
+        update(liteClient) // Make sure seqNo is actual
+
+        val data = _data.value
+
+        val expiry = validUntil ?: if (data.seqno == 0u) 0xFFFFFFFFL else
+            (data.lastServTime?.epochSeconds ?: now()) + messageTimeout
+
+        val body = CellBuilder.createCell {
+            if (ver >= 3) {
+                storeUInt(walletId, 32)
+                storeUInt(expiry, 32)
+            }
+            storeUInt32(data.seqno)
+            if (ver == 2) storeUInt(expiry, 32)
+            if (ver >= 4) storeUInt(0, 8) // op
+            transfers.forEach { transfer ->
+                val sendMode = if (transfer.sendMode > -1) transfer.sendMode else 3
+                storeUInt(sendMode, 8)
+                storeRef(MessageRelaxed.tlbCodec(AnyTlbConstructor), CellRef(intMsg(transfer)))
+            }
+        }
+
+        val signed = CellBuilder.createCell {
+            storeBytes(privateKey.sign(body.hash().toByteArray()))
+            storeEmbedded(body)
+        }
+
+        return signed
+    }
+
+    suspend fun transferPrepared(liteClient: LiteClient, prepared: Cell) {
+        val data = _data.value
+
+        val extMsgInfo = ExtInMsgInfo(src = AddrNone, dest = address, importFee = Coins())
+
+        val stateInit: StateInit? = if (data.state != null) null else getStateInit().value
+        val maybeStateInit = Maybe.of(stateInit?.let { Either.of<StateInit, CellRef<StateInit>>(null, CellRef(it)) })
+
+        val bodyRef = Either.of<Cell, CellRef<Cell>>(null, CellRef(prepared))
+
+        liteClient.sendMessage(Message(info = extMsgInfo, init = maybeStateInit, body = bodyRef))
+    }
+
+    suspend fun transfer(liteClient: LiteClient, vararg transfers: WalletTransfer, validUntil: Long? = null) {
+        if (transfers.size > 4)
+            throw IllegalArgumentException("Maximum of 4 transfers at a time are supported")
+
+        update(liteClient) // Make sure seqNo is actual
+
+        transferPrepared(liteClient, signTransfer(liteClient = liteClient, transfers = transfers, validUntil = validUntil))
+    }
+
+    suspend fun transferClassic(liteClient: LiteClient, vararg transfers: WalletTransfer) {
         if (transfers.size > 4)
             throw IllegalArgumentException("Maximum of 4 transfers at a time are supported")
 
@@ -168,26 +224,6 @@ class Wallet(
     }
 
     fun deprecated(): Boolean = Companion.deprecated(ver)
-
-    private fun intMsg(transfer: WalletTransfer): MessageRelaxed<Cell> {
-        val info = CommonMsgInfoRelaxed.IntMsgInfoRelaxed(
-            bounce = transfer.bounceable, src = AddrNone,
-            dest = transfer.destination,  value = transfer.coins,
-
-            ihrDisabled = true, bounced = false, ihrFee = Coins(),
-            fwdFee = Coins(),   createdLt = 0u,  createdAt = 0u
-        )
-
-        val init = Maybe.of(transfer.messageData.stateInit?.let {
-            Either.of<StateInit, CellRef<StateInit>>(null, it)
-        })
-        val bodyCell = transfer.messageData.body
-        // Will return left in priority if it is not null, else will return right
-        val body = Either.of(if (bodyCell.isEmpty()) bodyCell else null, CellRef(bodyCell))
-        return MessageRelaxed(info = info, init = init, body = body)
-    }
-
-
 
     companion object {
 
@@ -258,6 +294,24 @@ class Wallet(
             storeBytes(publicKey.key.toByteArray())
             if (ver >= 4)
                 storeUInt(0, 1) // plugin dict (empty)
+        }
+
+        fun intMsg(transfer: WalletTransfer): MessageRelaxed<Cell> {
+            val info = CommonMsgInfoRelaxed.IntMsgInfoRelaxed(
+                bounce = transfer.bounceable, src = AddrNone,
+                dest = transfer.destination,  value = transfer.coins,
+
+                ihrDisabled = true, bounced = false, ihrFee = Coins(),
+                fwdFee = Coins(),   createdLt = 0u,  createdAt = 0u
+            )
+
+            val init = Maybe.of(transfer.messageData.stateInit?.let {
+                Either.of<StateInit, CellRef<StateInit>>(null, it)
+            })
+            val bodyCell = transfer.messageData.body
+            // Will return left in priority if it is not null, else will return right
+            val body = Either.of(if (bodyCell.isEmpty()) bodyCell else null, CellRef(bodyCell))
+            return MessageRelaxed(info = info, init = init, body = body)
         }
     }
 

@@ -35,7 +35,8 @@ class TCLink(
     val hc: OkHttpClient,
     val db: AppDatabase,
     val js: Json,
-    val crs: CoroutineScope
+    val crs: CoroutineScope,
+    val evup: (method: String, params: JsonElement?, id: Long) -> Pair<Int?, String>
 ): EventSourceListener() {
 
     var req: Request? = null
@@ -104,13 +105,14 @@ class TCLink(
 
     override fun onOpen(eventSource: EventSource, response: Response) {
         Log.i("TCLink", "onOpen: " + response.message)
+        updateLastAct()
         isConnected.value = true
         isConnecting.value = false
-
     }
 
     override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
         Log.i("TCLink", "onEvent id:$id type:$type data:$data")
+        updateLastAct()
         receivedAnything.value = true
         val jd = js.parseToJsonElement(data)
         val from = (jd.jsonObject["from"] as? JsonPrimitive)?.content
@@ -143,34 +145,105 @@ class TCLink(
             Log.w("TCLink", "Warning: Ignoring old event ID $evid")
             return
         }
-        lastRecvId = evid
+        lastRecvId = evid // Persistent one should be updated after handling the event
         val method = md.jsonObject["method"]!!.jsonPrimitive.content
         val params = md.jsonObject["params"]
-        handleEvent(method, params)
+        handleEvent(method, params, evid)
     }
 
     override fun onClosed(eventSource: EventSource) {
         Log.i("TCLink", "onClosed")
+        updateLastAct()
         isConnected.value = false
-
     }
 
     override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
         Log.i("TCLink", "onFailure ${t?.message} ${response?.message}", t)
+        updateLastAct()
         isConnected.value = false
-
     }
 
-    fun handleEvent(method: String, params: JsonElement?) {
-        if (method == "disconnect") {
-            crs.launch {
-                teardown = true
-                db.dappDao().disconnect(cur!!.id)
+    fun updateLastAct() {
+        crs.launch { db.dappDao().updateLastAct(cur?.id ?: return@launch, nowms()) }
+    }
+
+    fun eventHandled(id: Long) {
+        if (id > lastRecvId) return // WTF?
+        crs.launch {
+            try {
+                db.dappDao().updateLastEvent(cur!!.id, id)
+                Log.i("TCLink", "LastEvent of ${cur!!.id} updated to $id")
+            } catch (_: Throwable) {}
+        }
+    }
+
+    fun handleEvent(method: String, params: JsonElement?, id: Long) {
+        Log.i("TCLink", "Handling incoming event/request: $id | $method")
+        when (method) {
+            "sendTransaction" -> {
+                eventHandled(id)
+                try {
+                    val res = evup(method, params, id)
+                    if (res.first == null)
+                        replySuccess(id, res.second)
+                    else if (res.first!! >= 0)
+                        replyError(id, res.first!!, res.second)
+                    /* else {
+                        if (res.first == -69)
+                            evs?.cancel()
+                    } */
+                } catch (e: Throwable) {
+                    Log.e("TCLink", "Upper handler crashed", e)
+                    replyError(id, 5000, "General protection fault")
+                }
+            }
+            "disconnect" -> {
+                eventHandled(id)
+                crs.launch {
+                    teardown = true
+                    db.dappDao().disconnect(cur!!.id)
+                }
+            }
+            else -> {
+                Log.w("TCLink", "Warning: unknown method $method with params $params")
+                eventHandled(id)
+                replyError(id, 4040, "Unknown method (Lower layer)")
             }
         }
     }
 
+    fun replySuccess(id: Long, data: String): Boolean {
+        Log.w("TCLink", "Sending success response to $id: $data")
+        return sendObject(buildJsonObject {
+            put("id", id.toString())
+            put("result", data)
+        })
+    }
+
+    fun replyError(id: Long, code: Int, message: String): Boolean {
+        Log.w("TCLink", "Sending error response to $id: ($code) $message")
+        return sendObject(buildJsonObject {
+            put("id", id.toString())
+            put("error", buildJsonObject {
+                put("code", code)
+                put("message", message)
+            })
+        })
+    }
+
+    fun sendObject(data: JsonObject): Boolean {
+        return justSendObject(
+            hc, pri ?: return false, apk ?: return false,
+            cur?.bridge ?: return false, data
+        )
+    }
+
     fun sendEvent(name: String, data: JsonObject): Boolean {
+        return justSendEvent(
+            hc, pri ?: return false, apk ?: return false,
+            cur?.bridge ?: return false, name, data
+        )
+        /*
         val c = cur
         val pu = pub
         val pk = pri
@@ -202,6 +275,43 @@ class TCLink(
         }
         Log.i("TCData", "Event response: $res")
         return true
+        */
+    }
+
+    companion object {
+
+        fun justSendObject(hc: OkHttpClient, privKey: ByteArray, appKey: ByteArray,
+                           bridge: String, data: JsonObject): Boolean {
+            val pu = nacl.box.keyPairFromSecretKey(privKey).first
+            val pt = data.toString()
+            val nonce = SecureRandom.nextBytes(24)
+            val ct = (nonce + nacl.box.seal(pt.encodeToByteArray(), nonce, appKey, privKey)).encodeBase64()
+            val req = Request.Builder()
+                .url(bridge + "message?client_id=" + pu.encodeHex() + "&to=" + appKey.encodeHex() + "&ttl=300")
+                .post(ct.toRequestBody("application/json".toMediaType()))
+                .build()
+            Log.i("TCData", "Sending: $req")
+            val res = hc.newCall(req).execute().use { r ->
+                if (!r.isSuccessful || r.body == null) {
+                    Log.w("TCData", "HTTP Request failed")
+                    return@use null
+                }
+                return@use r.body!!.string()
+            }
+            Log.i("TCData", "Response: $res")
+            return true
+        }
+
+        fun justSendEvent(hc: OkHttpClient, privKey: ByteArray, appKey: ByteArray,
+                          bridge: String, name: String, data: JsonObject): Boolean {
+            val event = buildJsonObject {
+                put("event", name)
+                put("id", nowms())
+                put("payload", data)
+            }
+            return justSendObject(hc, privKey, appKey, bridge, event)
+        }
+
     }
 
 }
