@@ -63,7 +63,7 @@ open class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         updateStatusBar(true)
         mdl.setPersistance(persistence)
-        mdl.developmentMode = BuildConfig.DEBUG
+        // mdl.developmentMode = BuildConfig.DEBUG
         if (mdl.developmentMode)
             mdl.fillRealisticLookingButInvalidSeedForPreviewInAndroidStudio()
         @Suppress("DEPRECATION") // Just to make sure it applies in some strange situations
