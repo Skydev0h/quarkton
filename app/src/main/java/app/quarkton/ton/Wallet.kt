@@ -1,6 +1,7 @@
 package app.quarkton.ton
 
 import android.util.Log
+import androidx.compose.ui.text.toLowerCase
 import app.quarkton.ton.extensions.storeEmbedded
 import app.quarkton.ton.extensions.toRepr
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,13 +31,14 @@ import org.ton.lite.client.internal.TransactionInfo
 import org.ton.tlb.CellRef
 import org.ton.tlb.constructor.AnyTlbConstructor
 import org.ton.tlb.storeRef
+import java.util.Locale
 import kotlin.math.abs
 
 class Wallet(
     val verRev: Int,
     val privateKey: PrivateKeyEd25519,
     val workchainId: Int = 0,
-    val walletId: Int = IDBase + workchainId,
+    val walletId: Int = rectifyWalletId(privateKey.publicKey(), workchainId),
     val messageTimeout: Int = 600
 ) {
 
@@ -257,6 +259,22 @@ class Wallet(
 
         const val Latest = 0xFFFF
 
+        const val pk_prefix = "c6b41348";
+
+        @OptIn(ExperimentalStdlibApi::class)
+        fun rectifyWalletId(publicKey: PublicKeyEd25519, workchainId: Int): Int {
+            var walId = IDBase + workchainId
+            val pub = publicKey.toByteArray().toHexString().lowercase()
+            // hack for fastnet generated wallets e_e
+            if (pub == "${pk_prefix}0bcb8fc4519b5b7325ddb6a05b2c1c5ab6bacefce5628ee4f91fb90340b1ec66") {
+                walId = 1333750041
+            }
+            if (pub == "${pk_prefix}2e63a7e4d162df0369a66c8e4019cf65d20e24d4dca4f8654aaa335729d18a71") {
+                walId = 1125816171
+            }
+            return walId;
+        }
+
         fun deprecated(ver: Int): Boolean = (ver <= 2)
         fun vrdeprecated(verRev: Int): Boolean =
             deprecated(abs(verRev).shr(8)) or (abs(verRev) == V4R1)
@@ -277,15 +295,17 @@ class Wallet(
             publicKey: PublicKeyEd25519,
             workchainId: Int = 0,
             walletId: Int? = null
-        ): CellRef<StateInit> = getStateInit(
-            CodeMaster.getWallet(verRev),
-            getInitData(verRev, publicKey, walletId ?: (IDBase + workchainId))
-        )
+        ): CellRef<StateInit> {
+            return getStateInit(
+                CodeMaster.getWallet(verRev),
+                getInitData(verRev, publicKey, walletId ?: rectifyWalletId(publicKey, workchainId))
+            )
+        }
 
         fun getInitData(
             verRev: Int,
             publicKey: PublicKeyEd25519,
-            walletId: Int = IDBase
+            walletId: Int
         ): Cell = CellBuilder.createCell {
             val ver = verRev.ushr(8)
             storeUInt(0, 32) // seqno: UInt32 = 0

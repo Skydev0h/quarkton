@@ -75,6 +75,7 @@ class ImportWalletScreen : BaseScreen() {
     }
 
     private fun continueClicked(nav: Navigator?, values: List<String>, bad: (Int) -> Unit) {
+        Log.i("ImportWalletScreen", values.toString())
         for (i in values.indices) {
             if (values[i] == "") {
                 Log.w("ImportWordsScreen", "Item $i is empty")
@@ -124,7 +125,7 @@ class ImportWalletScreen : BaseScreen() {
         val titleAlpha = {
             1 - MathUtils.clamp((textPosY.value - barPosY.value - 20) / 30, 0f, 1f)
         }
-        val seedLen = remember { mutableStateOf(24) }
+        val seedLen = remember { mutableStateOf(1) }
         val numbers = remember(seedLen.value) { Array(seedLen.value) { it + 1 } }
         val texts = remember(seedLen.value) { Array(seedLen.value) { mutableStateOf(TextFieldValue("")) } }
         val focuses = remember(seedLen.value) { Array(seedLen.value) { FocusRequester() } }

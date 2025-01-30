@@ -6,6 +6,8 @@ benchmark = "0.4.7" # https://search.maven.org/artifact/org.jetbrains.kotlinx/ko
 serialization = "1.5.0" # https://search.maven.org/artifact/org.jetbrains.kotlinx/kotlinx-serialization-core
 ktor = "2.2.4" # https://search.maven.org/artifact/io.ktor/ktor
 curve25519 = "0.0.4" # https://search.maven.org/artifact/io.github.andreypfau/curve25519-kotlin
+compose-plugin = "1.7.3"
+kotlin = "2.0.0"
 
 [libraries]
 coroutines-jvm = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-jdk8", version.ref = "coroutines" }
@@ -24,3 +26,8 @@ ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
 ktor-network = { module = "io.ktor:ktor-network", version.ref = "ktor" }
 ktor-utils = { module = "io.ktor:ktor-utils", version.ref = "ktor" }
 curve25519 = { module = "io.github.andreypfau:curve25519-kotlin", version.ref = "curve25519" }
+
+[plugins]
+jetbrainsCompose = { id = "org.jetbrains.compose", version.ref = "compose-plugin" }
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

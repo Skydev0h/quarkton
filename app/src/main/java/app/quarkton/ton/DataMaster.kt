@@ -143,7 +143,8 @@ class DataMaster(
 
     companion object {
         const val LOG = "DataMaster"
-        const val GLOBAL_CONFIG_URL = "https://ton.org/global-config.json"
+        // const val GLOBAL_CONFIG_URL = "https://ton.org/global-config.json"
+        const val GLOBAL_CONFIG_URL = "https://contest.com/file/400780400604/4/P0UeFR_X1mg.1626.json/04de18101ec5af6dea"; // fastnet
         const val GLOBAL_CONFIG_FILE = "global-config.json"
         const val DNS_ROOT_ADDR = "E56754F83426F69B09267BD876AC97C44821345B7E266BD956A7BFBFB98DF35C"
         const val TC_DEFAULT_BRIDGE = "tonapi"
@@ -272,10 +273,12 @@ class DataMaster(
                 throw SecurityException("hardforks of ton global-config does not contain embedded one at ${it.seqno}")
         }
         // hardforks MAY NOT contain any differing entries earlier than the last embedded one!
-        val hiseqno = emvc.hardforks.map { it.seqno }.reduce{ x, y -> max(x, y) }
-        conf.validator.hardforks.forEach {
-            if ((it.seqno <= hiseqno) and !emvc.hardforks.contains(it))
-                throw SecurityException("hardforks of ton global-config contain ${it.seqno} hardfork not from embedded")
+        if (!emvc.hardforks.isEmpty()) {
+            val hiseqno = emvc.hardforks.map { it.seqno }.reduce { x, y -> max(x, y) }
+            conf.validator.hardforks.forEach {
+                if ((it.seqno <= hiseqno) and !emvc.hardforks.contains(it))
+                    throw SecurityException("hardforks of ton global-config contain ${it.seqno} hardfork not from embedded")
+            }
         }
         val file = File(ctx.filesDir, GLOBAL_CONFIG_FILE)
         file.writeText(str)
